@@ -243,7 +243,7 @@ int main(){
     // run(fileContent);
 
     // Updated: Base path for tests directory
-    string basePath = "/mnt/c/Users/ankit/OneDrive/Desktop/Learn/json-parser/tests";
+    string basePath = "./tests";
     
     // Traverse all sub-directories recursively for .json files
     try {

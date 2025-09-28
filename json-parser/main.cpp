@@ -29,6 +29,26 @@ enum  TokenType{
     EOF_VALUE
 };
 
+string printToken(TokenType t) {
+    switch (t) {
+        case LEFT_BRACE: return "LEFT_BRACE";
+        case RIGHT_BRACE: return "RIGHT_BRACE";
+        case LEFT_SQ: return "LEFT_SQ";
+        case RIGHT_SQ: return "RIGHT_SQ";
+        case COLON: return "COLON";
+        case COMMA: return "COMMA";
+        case QUOTE: return "QUOTE";
+        case STRING: return "STRING";
+        case NUMBER: return "NUMBER";
+        case IDENTIFIER: return "IDENTIFIER";
+        case TRUE: return "TRUE";
+        case FALSE: return "FALSE";
+        case NULL_VALUE: return "NULL_VALUE";
+        case EOF_VALUE: return "EOF_VALUE";
+        default: return "UNKNOWN";
+    }
+}
+
 class Token{   
 public:
     TokenType type;
@@ -138,7 +158,7 @@ public:
             return;
         }
 
-        advance();
+        advance(); // Consume closing "
 
         int len = current - start;
 
@@ -239,6 +259,146 @@ public:
     }
 };
 
+class Parser{
+public:
+    int tokenIndex = 0;
+    Token currToken;
+    vector<Token> tokens;
+
+    Parser(vector<Token> _tokens){
+        tokens = _tokens;
+        tokenIndex = 0;
+        if (!tokens.empty()) {
+            currToken = tokens[tokenIndex];
+        } else {
+            currToken = Token();
+        }
+    }
+
+    Token getNextToken(){
+        if (tokenIndex + 1 < tokens.size()) {
+            return tokens[++tokenIndex];
+        } else {
+            return Token(EOF_VALUE, "", currToken.line);
+        }
+    }  
+    
+    Token peekNextToken(){
+        if (tokenIndex + 1 < tokens.size()) {
+            return tokens[tokenIndex + 1];
+        } else {
+            return Token(EOF_VALUE, "", currToken.line);
+        }
+    }  
+
+    void error(const string& message, int token_line) {
+        cerr << "Parser error at line " << token_line << ": " << message << endl;
+        // For now, we throw to stop parsing on error
+        throw invalid_argument("Parsing failed");
+    }
+
+    Token parseNextToken(TokenType expected, int token_line){
+        if (currToken.type == expected) {
+            Token next = getNextToken();  // Advances tokenIndex, returns new token
+            currToken = next;             // Update currToken to the next one
+            return next;                  // Return the new currToken
+        } else {
+            string msg = "Expected " + printToken(expected) + ", found " + printToken(currToken.type);
+            error(msg, token_line);
+            return Token(EOF_VALUE, "", currToken.line);
+        }
+    }
+
+    void parseValue(){
+        int token_line = currToken.line;
+        if (currToken.type == LEFT_BRACE){
+            parseObject();
+        } else if (currToken.type == LEFT_SQ){
+            parseArray();
+        } else if (currToken.type == STRING){
+            parseNextToken(STRING, token_line);
+        } else if (currToken.type == NUMBER){
+            parseNextToken(NUMBER, token_line);
+        } else if (currToken.type == TRUE){
+            parseNextToken(TRUE, token_line);
+        } else if (currToken.type == FALSE){
+            parseNextToken(FALSE, token_line);
+        } else if (currToken.type == NULL_VALUE){
+            parseNextToken(NULL_VALUE, token_line);
+        } else {
+            string msg = "Unexpected token for value: " + printToken(currToken.type);
+            error(msg, token_line);
+        }
+    }
+
+    void parseObject(){
+        int token_line = currToken.line;
+        currToken = getNextToken(); // Consume '{'
+
+        if (currToken.type == RIGHT_BRACE){
+            currToken = getNextToken();
+            return;
+        }
+
+        // First key-value pair
+        parseNextToken(STRING, token_line);
+        parseNextToken(COLON, currToken.line);
+        parseValue();
+        
+        while (currToken.type == COMMA) {
+            parseNextToken(COMMA, currToken.line);
+            parseNextToken(STRING, currToken.line);
+            parseNextToken(COLON, currToken.line);
+            parseValue();
+        }
+
+        parseNextToken(RIGHT_BRACE, currToken.line);
+    }
+    
+    void parseArray(){
+        int token_line = currToken.line;
+        currToken = getNextToken(); // Consume '['
+        
+        if (currToken.type == RIGHT_SQ){
+            currToken = getNextToken();
+            return;
+        }
+        
+        parseValue();
+        
+        while (currToken.type == COMMA) {  
+            parseNextToken(COMMA, currToken.line);
+            parseValue();
+        }
+        
+        parseNextToken(RIGHT_SQ, currToken.line);
+    }
+
+    bool parseJson(){
+        try {
+            int token_line = currToken.line;
+            if (currToken.type == LEFT_BRACE){
+                parseObject();
+            } else if (currToken.type == LEFT_SQ){
+                parseArray();
+            } else {
+                string msg = "JSON must start with object or array, found " + printToken(currToken.type);
+                error(msg, token_line);
+                return false;
+            }
+            // Ensure we reach EOF
+            if (currToken.type != EOF_VALUE) {
+                string msg = "Extra tokens after valid JSON";
+                error(msg, currToken.line);
+                return false;
+            }
+            return true;
+        } catch (const invalid_argument& e) {
+            return false;
+        }
+    }
+};
+
 string getFileContent(string filePath){
     ifstream file(filePath);
 
@@ -264,10 +424,21 @@ void run(string source){
 
     vector<Token> tokens = scanner.scanTokens();
 
-    for(Token token: tokens){
-        cout << token.lexeme << endl; 
+    for (Token token : tokens) {
+        cout << printToken(token.type) << " : " << token.lexeme << " (line " << token.line << ")" << endl; 
     }
 
+    try {
+        Parser parser(tokens);
+        bool is_valid = parser.parseJson();
+        if (is_valid) {
+            cout << "Valid JSON" << endl;
+        } else {
+            cout << "Invalid JSON" << endl;
+        }
+    } catch (const exception& e) {
+        cout << "Parsing failed: " << e.what() << endl;
+    }
 }
 
 int main(){

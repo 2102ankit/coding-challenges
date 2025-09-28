@@ -1,5 +1,6 @@
 #include<bits/stdc++.h>
 #include <filesystem>
+#include <stdexcept> // For std::invalid_argument
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -34,18 +35,29 @@ public:
     string lexeme;
     string str_val;
     float decimal;
+    int line; // Line number where the token starts
 
     // Constructor for the Token class
-    Token(TokenType _type, string _lexeme, string _str_val, float _decimal){
+    Token(){
+        type = EOF_VALUE;
+        lexeme = "";
+        str_val = "";
+        decimal = 0.0f;
+        line = 1;
+    }
+
+    Token(TokenType _type, string _lexeme, string _str_val, float _decimal, int _line){
         type = _type;
         lexeme = _lexeme;
         str_val = _str_val;
         decimal = _decimal;
+        line = _line;
     }
 
-    Token(TokenType _type, string _lexeme){
+    Token(TokenType _type, string _lexeme, int _line){
         type = _type;
         lexeme = _lexeme;
+        line = _line;
     }
 };
 
@@ -56,6 +68,7 @@ public:
 
     int start = 0;
     int current = 0;
+    int line = 1; // Current line number
 
     Scanner(string input_source){
         source = input_source;
@@ -66,19 +79,23 @@ public:
     }
 
     char advance(){
+        char c = source[current];
+        if (c == '\n') {
+            line++;
+        }
         return source[current++];
     }
 
-    void addToken(TokenType type){
+    void addToken(TokenType type, int current_line){
         int len = current - start;
-        string text = source.substr(start,len);
-        tokens.push_back(Token(type,text));
+        string text = source.substr(start, len);
+        tokens.push_back(Token(type, text, current_line));
     }
 
-    void addToken(TokenType type, string _str_val, float decimal){
+    void addToken(TokenType type, string _str_val, float decimal, int current_line){
         int len = current - start;
-        string text = source.substr(start,len);
-        tokens.push_back(Token(type,text,_str_val,decimal));
+        string text = source.substr(start, len);
+        tokens.push_back(Token(type, text, _str_val, decimal, current_line));
     }
 
     char peek(){
@@ -105,14 +122,19 @@ public:
         return isalpha(static_cast<unsigned char>(c)) || isdigit(static_cast<unsigned char>(c)) || c == '_';
     }
 
+    void error(int error_line, const string& message) {
+        // For now, we continue scanning but could throw or exit if desired
+        cerr << "Scanner error at line " << error_line << ": " << message << endl;
+    }
+
     void scan_string(){
         while (peek()!='"' && !isAtEnd())
         {
             advance();
         }
 
-        if(isAtEnd()){
-            cerr << "Unterminated string\n";
+        if (isAtEnd()) {
+            error(line, "Unterminated string");
             return;
         }
 
@@ -121,12 +143,12 @@ public:
         int len = current - start;
 
         if (len < 2) {  // Minimal empty string
-            cerr << "Unterminated string\n";
+            error(line, "Invalid empty string");
             return;
         }
 
-        string str_val = source.substr(start+1, len-2);
-        addToken(STRING,str_val,0.0f);
+        string str_val = source.substr(start + 1, len - 2);
+        addToken(STRING, str_val, 0.0f, line);
     }
 
     void scan_number(){
@@ -134,19 +156,23 @@ public:
         {
             advance();
         }
-        //check for .
-        if(peek()=='.' && isDigit(peekNext())){
-            do
-            {
+        // Check for .
+        if (peek() == '.' && isDigit(peekNext())) {
+            advance(); // Consume .
+            while (isDigit(peek())) {
                 advance();
-            } while (isDigit(peek()));
-            
+            }
         }
         int len = current - start;
         string str_val = source.substr(start, len);
-        float parsed_decimal = stof(str_val);
-        
-        addToken(NUMBER,"",parsed_decimal);
+        try {
+            float parsed_decimal = stof(str_val);
+            addToken(NUMBER, "", parsed_decimal, line);
+        } catch (const invalid_argument& e) {
+            error(line, "Invalid number format: " + str_val);
+        } catch (const out_of_range& e) {
+            error(line, "Number out of range: " + str_val);
+        }
     }
 
     void scan_identifier(){
@@ -157,36 +183,45 @@ public:
         int len = current - start;
         string str_val = source.substr(start, len);
 
-        if(str_val=="true") addToken(TRUE);
-        else if(str_val=="false") addToken(FALSE);
-        else if(str_val=="null") addToken(NULL_VALUE);
-        else addToken(IDENTIFIER);
-        
+        if (str_val == "true") {
+            addToken(TRUE, line);
+        } else if (str_val == "false") {
+            addToken(FALSE, line);
+        } else if (str_val == "null") {
+            addToken(NULL_VALUE, line);
+        } else {
+            addToken(IDENTIFIER, line);
+        }
     }
 
     void scanToken(){
         char c = advance();
-        switch (c){
+        switch (c) {
             case ' ':
-            case '\n':
             case '\r':
             case '\t': break;
-            case '{': addToken(LEFT_BRACE); break;
-            case '}': addToken(RIGHT_BRACE); break;
-            case '[': addToken(LEFT_SQ); break;
-            case ']': addToken(RIGHT_SQ); break;
-            case ':': addToken(COLON); break;
-            case ',': addToken(COMMA); break;
-            case '"': scan_string(); break;
-            
+            case '\n': break; // Handled in advance()
+            case '{': addToken(LEFT_BRACE, line); break;
+            case '}': addToken(RIGHT_BRACE, line); break;
+            case '[': addToken(LEFT_SQ, line); break;
+            case ']': addToken(RIGHT_SQ, line); break;
+            case ':': addToken(COLON, line); break;
+            case ',': addToken(COMMA, line); break;
+            case '"': 
+                start = current - 1; // Adjust start to include the opening "
+                scan_string(); 
+                break;
             default:
-                if(isDigit(c)){
+                if (isDigit(c)) {
+                    start = current - 1; // Adjust start to include the first digit
                     scan_number();
-                }else if(isAlpha(c)){
+                } else if (isAlpha(c)) {
+                    start = current - 1; // Adjust start to include the first alpha
                     scan_identifier();
-                }
-                else{
-                    cerr << "Unexpected character " << c << endl;
+                } else {
+                    string msg = "Unexpected character: '" + string(1, c) + "'";
+                    error(line, msg);
+                    // Continue without adding token
                 }
                 break;
         }
@@ -199,7 +234,7 @@ public:
             scanToken();
         }
 
-        // tokens.push_back(Token(EOF_VALUE, ""));
+        // tokens.push_back(Token(EOF_VALUE, "", line));
         return tokens;
     }
 };
@@ -236,12 +271,6 @@ void run(string source){
 }
 
 int main(){
-    
-    // string filePath = "/mnt/c/Users/ankit/OneDrive/Desktop/Learn/json-parser/tests/step1/valid.json";
-    // string fileContent = getFileContent(filePath);
-
-    // run(fileContent);
-
     // Updated: Base path for tests directory
     string basePath = "./tests";
     
@@ -258,6 +287,8 @@ int main(){
                 cout << "--- End of file ---\n";
             }
         }
+    } catch (const filesystem::filesystem_error& e) {
+        cerr << "Filesystem error: " << e.what() << endl;
     } catch (...) {
         cerr << "Unknown error during directory traversal" << endl;
     }
